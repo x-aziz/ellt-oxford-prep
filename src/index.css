@@ -1,0 +1,23 @@
+:root {
+  /* Oxford-ELLT light theme */
+  --gold: #f5a623;
+  --panel: #ffffff;
+  --card: #f6f7fa;
+  --border: #e2e4ea;
+  --red: #cf3a2e;
+  --green: #1f8a3d;
+  --blue: #1c64e0;
+  --purple: #7c5cbf;
+  --teal: #0f9aa8;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: #e9ecef;
+  color: #1a1a2e;
+  font-family: -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; }
+button { font-family: inherit; }
