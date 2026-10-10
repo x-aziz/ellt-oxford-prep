@@ -9,11 +9,11 @@ import {
   setDoc,
   updateDoc,
   where,
-} from 'firebase/firestore';
-import { db } from './firebase.js';
+} from "firebase/firestore";
+import { db } from "./firebase.js";
 
 /*
-  Shared, admin-managed content — NOT under users/{uid}. Three top-level
+  Shared, admin-managed content   NOT under users/{uid}. Three top-level
   collections, all readable by anyone signed in, writable only by admins
   (enforced in firestore.rules):
 
@@ -23,7 +23,7 @@ import { db } from './firebase.js';
                       A "Full Test" = one Reading mock + one Listening mock + one Writing mock,
                       shown to students as a single block on the dashboard.
 
-  Firestore rejects `undefined`, and can't serialize functions/Dates as-is —
+  Firestore rejects `undefined`, and can't serialize functions/Dates as-is  
   round-tripping through JSON strips both safely.
 */
 const clean = (obj) => JSON.parse(JSON.stringify(obj));
@@ -31,7 +31,7 @@ const clean = (obj) => JSON.parse(JSON.stringify(obj));
 /* ---------------- mocks ---------------- */
 
 export function subscribeMocks(kind, onData, onError) {
-  const q = query(collection(db, 'mocks'), where('kind', '==', kind));
+  const q = query(collection(db, "mocks"), where("kind", "==", kind));
   return onSnapshot(
     q,
     (snap) => {
@@ -43,11 +43,11 @@ export function subscribeMocks(kind, onData, onError) {
   );
 }
 
-/** mock.id is the display number (1, 2, 3…) — the Firestore doc id is derived
+/** mock.id is the display number (1, 2, 3…)   the Firestore doc id is derived
  *  from it so re-saving the same mock number overwrites in place. */
 export function saveMock(kind, mock) {
   const docId = `${kind}-${mock.id}`;
-  return setDoc(doc(db, 'mocks', docId), {
+  return setDoc(doc(db, "mocks", docId), {
     ...clean(mock),
     kind,
     updatedAt: serverTimestamp(),
@@ -55,14 +55,14 @@ export function saveMock(kind, mock) {
 }
 
 export function deleteMock(docId) {
-  return deleteDoc(doc(db, 'mocks', docId));
+  return deleteDoc(doc(db, "mocks", docId));
 }
 
 /* ---------------- full tests (Reading + Listening + Writing) ---------------- */
 
 export function subscribeTests(onData, onError) {
   return onSnapshot(
-    collection(db, 'tests'),
+    collection(db, "tests"),
     (snap) => {
       const rows = snap.docs.map((d) => ({ docId: d.id, ...d.data() }));
       rows.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
@@ -75,20 +75,20 @@ export function subscribeTests(onData, onError) {
 /** test.id is the display number (Test 1, Test 2…); re-saving the same number overwrites. */
 export function saveTest(test) {
   const { docId: _omit, ...rest } = test;
-  return setDoc(doc(db, 'tests', `test-${rest.id}`), {
+  return setDoc(doc(db, "tests", `test-${rest.id}`), {
     ...clean(rest),
     updatedAt: serverTimestamp(),
   });
 }
 
 export function deleteTest(docId) {
-  return deleteDoc(doc(db, 'tests', docId));
+  return deleteDoc(doc(db, "tests", docId));
 }
 
 /* ---------------- drills ---------------- */
 
 export function subscribeDrills(kind, onData, onError) {
-  const q = query(collection(db, 'drills'), where('kind', '==', kind));
+  const q = query(collection(db, "drills"), where("kind", "==", kind));
   return onSnapshot(
     q,
     (snap) => {
@@ -103,13 +103,13 @@ export function subscribeDrills(kind, onData, onError) {
 /** Pass docId to update an existing drill set, or null to create a new one. */
 export function saveDrill(kind, docId, data) {
   if (docId) {
-    return updateDoc(doc(db, 'drills', docId), {
+    return updateDoc(doc(db, "drills", docId), {
       ...clean(data),
       kind,
       updatedAt: serverTimestamp(),
     });
   }
-  return addDoc(collection(db, 'drills'), {
+  return addDoc(collection(db, "drills"), {
     ...clean(data),
     kind,
     createdAt: serverTimestamp(),
@@ -118,5 +118,5 @@ export function saveDrill(kind, docId, data) {
 }
 
 export function deleteDrill(docId) {
-  return deleteDoc(doc(db, 'drills', docId));
+  return deleteDoc(doc(db, "drills", docId));
 }

@@ -1,14 +1,14 @@
-import { READING_MOCKS } from './readingMocks.js';
-import { LISTENING_MOCKS } from './listeningMocks.js';
-import { WRITING_MOCKS } from './writingMocks.js';
-import { WRITING_STRUCTURES } from './writingStructures.js';
-import { READING_DRILLS } from './readingDrills.js';
-import { saveMock, saveDrill, saveTest } from '../services/content.js';
+import { READING_MOCKS } from "./readingMocks.js";
+import { LISTENING_MOCKS } from "./listeningMocks.js";
+import { WRITING_MOCKS } from "./writingMocks.js";
+import { WRITING_STRUCTURES } from "./writingStructures.js";
+import { READING_DRILLS } from "./readingDrills.js";
+import { saveMock, saveDrill, saveTest } from "../services/content.js";
 
 /**
  * One-time (idempotent) import of the bundled static content into Firestore,
  * so the admin has something to edit instead of starting from zero. Safe to
- * run more than once — mocks and tests overwrite by id, drills overwrite by a
+ * run more than once   mocks and tests overwrite by id, drills overwrite by a
  * deterministic key stashed in `seedKey`.
  *
  * Also creates starter Full Tests: Test N = Reading N + Listening N + Writing N
@@ -21,19 +21,23 @@ export async function seedDefaultContent(existingDrills) {
   let tests = 0;
 
   for (const m of READING_MOCKS) {
-    await saveMock('reading', m);
+    await saveMock("reading", m);
     mocks++;
   }
   for (const m of LISTENING_MOCKS) {
-    await saveMock('listening', m);
+    await saveMock("listening", m);
     mocks++;
   }
   for (const m of WRITING_MOCKS) {
-    await saveMock('writingMock', m);
+    await saveMock("writingMock", m);
     mocks++;
   }
 
-  const fullCount = Math.min(READING_MOCKS.length, LISTENING_MOCKS.length, WRITING_MOCKS.length);
+  const fullCount = Math.min(
+    READING_MOCKS.length,
+    LISTENING_MOCKS.length,
+    WRITING_MOCKS.length,
+  );
   for (let i = 0; i < fullCount; i++) {
     await saveTest({
       id: i + 1,
@@ -46,12 +50,14 @@ export async function seedDefaultContent(existingDrills) {
     tests++;
   }
 
-  const existingByKey = new Map((existingDrills || []).map((d) => [d.seedKey, d.docId]));
+  const existingByKey = new Map(
+    (existingDrills || []).map((d) => [d.seedKey, d.docId]),
+  );
 
   for (let i = 0; i < READING_DRILLS.length; i++) {
     const d = READING_DRILLS[i];
-    const seedKey = 'reading-' + d.key;
-    await saveDrill('reading', existingByKey.get(seedKey) || null, {
+    const seedKey = "reading-" + d.key;
+    await saveDrill("reading", existingByKey.get(seedKey) || null, {
       seedKey,
       order: i,
       title: d.title,
@@ -64,8 +70,8 @@ export async function seedDefaultContent(existingDrills) {
 
   for (let i = 0; i < WRITING_STRUCTURES.length; i++) {
     const s = WRITING_STRUCTURES[i];
-    const seedKey = 'writing-' + s.id;
-    await saveDrill('writing', existingByKey.get(seedKey) || null, {
+    const seedKey = "writing-" + s.id;
+    await saveDrill("writing", existingByKey.get(seedKey) || null, {
       seedKey,
       order: i,
       name: s.name,

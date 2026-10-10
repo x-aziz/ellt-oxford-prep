@@ -6,7 +6,7 @@ import { useProfile } from "../../hooks/useProfile.js";
 // import './writingMock.css';
 
 /*
-  Writing mock — same TCY flow as the reading/listening mocks:
+  Writing mock   same TCY flow as the reading/listening mocks:
   list -> confirm -> welcome -> Section 1 (summary) -> Section 2 (essay)
   -> end confirm -> submitting -> result.
 
@@ -222,9 +222,9 @@ export default function WritingMock() {
       const pct = Math.round((score / total) * 100);
       const band =
         pct >= 85
-          ? "Strong — on track for Level 6+"
+          ? "Strong   on track for Level 6+"
           : pct >= 65
-            ? "Developing — close to Level 5.5–6"
+            ? "Developing   close to Level 5.5–6"
             : "Needs more practice";
       setResult({ c1, c2, score, total, pct, band, d });
       recordAttempt({
@@ -338,10 +338,10 @@ export default function WritingMock() {
             This test has <b>two sections</b>:
           </p>
           <p>
-            <b>Section 1</b> — read a text and write a short summary in your own
+            <b>Section 1</b> read a text and write a short summary in your own
             words.
             <br />
-            <b>Section 2</b> — write an essay in response to the question.
+            <b>Section 2</b> write an essay in response to the question.
           </p>
           <p>
             You can move between the sections at any time. Click{" "}
@@ -375,7 +375,7 @@ export default function WritingMock() {
         showTimer={started}
       >
         <div className="tcy-sec-label">
-          Section {secIdx + 1}/2 — {SECTION_NAMES[secIdx]}
+          Section {secIdx + 1}/2 {SECTION_NAMES[secIdx]}
         </div>
         <div className="wm-split">
           <div className="wm-left">
@@ -522,8 +522,8 @@ export default function WritingMock() {
           </div>
           <p className="wm-note">
             These checks cover length, structure, linking words and essay-type
-            language. They cannot judge grammar or ideas — compare your text
-            with the model answer below.
+            language. They cannot judge grammar or ideas compare your text with
+            the model answer below.
           </p>
 
           {[0, 1].map((i) => {
@@ -532,13 +532,13 @@ export default function WritingMock() {
             return (
               <div className="wm-result-block" key={i}>
                 <h3>
-                  Section {i + 1} — {SECTION_NAMES[i]}
+                  Section {i + 1} {SECTION_NAMES[i]}
                 </h3>
                 <ul className="wm-checks">
                   {checks.map((c, k) => (
                     <li key={k} className={c.ok ? "ok" : "bad"}>
                       <span>{c.ok ? "✓" : "✗"}</span> {c.label}
-                      {c.detail && <em> — {c.detail}</em>}
+                      {c.detail && <em> {c.detail}</em>}
                     </li>
                   ))}
                 </ul>

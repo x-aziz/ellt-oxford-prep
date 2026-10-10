@@ -12,8 +12,8 @@ import {
   serverTimestamp,
   setDoc,
   writeBatch,
-} from 'firebase/firestore';
-import { db } from './firebase';
+} from "firebase/firestore";
+import { db } from "./firebase";
 
 /*
   Data model (everything lives under the signed-in user):
@@ -24,15 +24,15 @@ import { db } from './firebase';
   users/{uid}/drills/{setKey}       { marks: { "0": "good" | "bad", ... }, updatedAt }
 */
 
-// Firestore rejects `undefined` values — strip them.
+// Firestore rejects `undefined` values   strip them.
 const clean = (obj) => JSON.parse(JSON.stringify(obj));
 
 export async function ensureUserProfile(user, displayName) {
   await setDoc(
-    doc(db, 'users', user.uid),
+    doc(db, "users", user.uid),
     {
       email: user.email,
-      displayName: displayName || user.displayName || '',
+      displayName: displayName || user.displayName || "",
       createdAt: serverTimestamp(),
     },
     { merge: true },
@@ -42,7 +42,7 @@ export async function ensureUserProfile(user, displayName) {
 /* ---------- attempts (mock exams + writing sets) ---------- */
 
 export function saveAttempt(uid, attempt) {
-  return addDoc(collection(db, 'users', uid, 'attempts'), {
+  return addDoc(collection(db, "users", uid, "attempts"), {
     ...clean(attempt),
     createdAt: serverTimestamp(),
   });
@@ -50,8 +50,8 @@ export function saveAttempt(uid, attempt) {
 
 export function subscribeAttempts(uid, onData, onError) {
   const q = query(
-    collection(db, 'users', uid, 'attempts'),
-    orderBy('createdAt', 'desc'),
+    collection(db, "users", uid, "attempts"),
+    orderBy("createdAt", "desc"),
     limit(300),
   );
   return onSnapshot(
@@ -70,7 +70,7 @@ export async function recordMistakes(uid, mistakes, { bump = true } = {}) {
   mistakes.forEach((m) => {
     const { id, ...rest } = clean(m);
     batch.set(
-      doc(db, 'users', uid, 'mistakes', id),
+      doc(db, "users", uid, "mistakes", id),
       {
         ...rest,
         ...(bump ? { timesWrong: increment(1) } : {}),
@@ -83,11 +83,14 @@ export async function recordMistakes(uid, mistakes, { bump = true } = {}) {
 }
 
 export function removeMistake(uid, id) {
-  return deleteDoc(doc(db, 'users', uid, 'mistakes', id));
+  return deleteDoc(doc(db, "users", uid, "mistakes", id));
 }
 
 export function subscribeMistakes(uid, onData, onError) {
-  const q = query(collection(db, 'users', uid, 'mistakes'), orderBy('updatedAt', 'desc'));
+  const q = query(
+    collection(db, "users", uid, "mistakes"),
+    orderBy("updatedAt", "desc"),
+  );
   return onSnapshot(
     q,
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -99,7 +102,7 @@ export function subscribeMistakes(uid, onData, onError) {
 
 /** Returns { [setKey]: { [idx]: 'good' | 'bad' } } */
 export async function getDrillMarks(uid) {
-  const snap = await getDocs(collection(db, 'users', uid, 'drills'));
+  const snap = await getDocs(collection(db, "users", uid, "drills"));
   const out = {};
   snap.forEach((d) => {
     out[d.id] = d.data().marks || {};
@@ -108,7 +111,7 @@ export async function getDrillMarks(uid) {
 }
 
 export function saveDrillMarks(uid, setKey, marks) {
-  return setDoc(doc(db, 'users', uid, 'drills', setKey), {
+  return setDoc(doc(db, "users", uid, "drills", setKey), {
     marks: clean(marks),
     updatedAt: serverTimestamp(),
   });

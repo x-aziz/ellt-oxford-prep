@@ -11,8 +11,20 @@ import { WRITING_DRILL_TYPES } from "../../data/writingDrillTypes.js";
 import "../tests/tests.css";
 
 const DRILL_TYPES = {
-  reading: ["Paragraph ordering", "Sentence fill", "Vocabulary in context", "Gap fill (one word)", "True / False / Not Given", "Multiple choice"],
-  listening: ["Speaker selection", "Multiple choice", "Gap fill (≤3 words)", "Table fill (≤3 words)"],
+  reading: [
+    "Paragraph ordering",
+    "Sentence fill",
+    "Vocabulary in context",
+    "Gap fill (one word)",
+    "True / False / Not Given",
+    "Multiple choice",
+  ],
+  listening: [
+    "Speaker selection",
+    "Multiple choice",
+    "Gap fill (≤3 words)",
+    "Table fill (≤3 words)",
+  ],
   writing: ["Summary drill", "Essay drill"],
 };
 
@@ -41,7 +53,10 @@ export default function Dashboard() {
     <div className="tb-wrap">
       <header className="tb-hero">
         <h1>Welcome back, {name}</h1>
-        <p>Pick a full test to sit Reading, Listening and Writing, or train one skill at a time.</p>
+        <p>
+          Pick a full test to sit Reading, Listening and Writing, or train one
+          skill at a time.
+        </p>
       </header>
 
       <section className="tb-section">
@@ -50,23 +65,41 @@ export default function Dashboard() {
           <span>Reading · Listening · Writing</span>
         </div>
         {loading && <div className="tb-empty">Loading tests…</div>}
-        {!loading && tests.length === 0 && <div className="tb-empty">No full tests yet. An admin can create one in Admin → Full Tests.</div>}
+        {!loading && tests.length === 0 && (
+          <div className="tb-empty">
+            No full tests yet. An admin can create one in Admin → Full Tests.
+          </div>
+        )}
         <div className="tb-grid">
           {tests.map((t) => {
             const p = testProgress(t, best);
-            const toBand = (pct) => (Math.round((pct / 100) * 9 * 10) / 10).toFixed(1);
+            const toBand = (pct) =>
+              (Math.round((pct / 100) * 9 * 10) / 10).toFixed(1);
             const skillRows = [
               { key: "listening", icon: "🎧" },
               { key: "reading", icon: "📖" },
               { key: "writing", icon: "✏️" },
             ];
-            const attemptedPcts = skillRows.map((c) => p[c.key].attempt?.pct).filter((v) => v != null);
-            const overallBand = attemptedPcts.length ? toBand(attemptedPcts.reduce((s, v) => s + v, 0) / attemptedPcts.length) : null;
+            const attemptedPcts = skillRows
+              .map((c) => p[c.key].attempt?.pct)
+              .filter((v) => v != null);
+            const overallBand = attemptedPcts.length
+              ? toBand(
+                  attemptedPcts.reduce((s, v) => s + v, 0) /
+                    attemptedPcts.length,
+                )
+              : null;
             return (
-              <button key={t.docId || t.id} className="jc-test-card" onClick={() => navigate(`/tests/${t.id}`)}>
+              <button
+                key={t.docId || t.id}
+                className="jc-test-card"
+                onClick={() => navigate(`/tests/${t.id}`)}
+              >
                 <div className="jc-test-head">
                   <span className="jc-test-name">Test {t.id}</span>
-                  {overallBand !== null && <span className="jc-badge">{overallBand}</span>}
+                  {overallBand !== null && (
+                    <span className="jc-badge">{overallBand}</span>
+                  )}
                 </div>
                 <div className="jc-skill-rows">
                   {skillRows.map((c) => {
@@ -77,7 +110,11 @@ export default function Dashboard() {
                       <div className={`jc-skill-row jc-${c.key}`} key={c.key}>
                         <span className="jc-skill-icon">{c.icon}</span>
                         <span className="jc-skill-label">{s.label}</span>
-                        {band !== null ? <span className="jc-skill-score">{band}</span> : <span className="jc-skill-score jc-empty">—</span>}
+                        {band !== null ? (
+                          <span className="jc-skill-score">{band}</span>
+                        ) : (
+                          <span className="jc-skill-score jc-empty"> </span>
+                        )}
                       </div>
                     );
                   })}
@@ -95,25 +132,48 @@ export default function Dashboard() {
         </div>
         <div className="tb-skill-grid">
           {SKILLS.map((s) => (
-            <button key={s.key} className={`tb-skill-block ${s.letter.toLowerCase()}`} onClick={() => navigate(DRILL_ROUTE[s.key])}>
+            <button
+              key={s.key}
+              className={`tb-skill-block ${s.letter.toLowerCase()}`}
+              onClick={() => navigate(DRILL_ROUTE[s.key])}
+            >
               <div className="tb-skill-top">
-                <span className={`tb-letter ${s.letter.toLowerCase()} done`}>{s.letter}</span>
+                <span className={`tb-letter ${s.letter.toLowerCase()} done`}>
+                  {s.letter}
+                </span>
                 <div>
                   <h3>{s.label} drills</h3>
                   <small>{drillCount[s.key]} question types</small>
                 </div>
               </div>
               <div className="tb-chips">
-                {DRILL_TYPES[s.key].map((t) => <span className="tb-chip" key={t}>{t}</span>)}
+                {DRILL_TYPES[s.key].map((t) => (
+                  <span className="tb-chip" key={t}>
+                    {t}
+                  </span>
+                ))}
               </div>
             </button>
           ))}
-          <button className="tb-skill-block m" onClick={() => navigate("/mistakes")}>
+          <button
+            className="tb-skill-block m"
+            onClick={() => navigate("/mistakes")}
+          >
             <div className="tb-skill-top">
-              <span className="tb-letter off" style={{ background: "#e8ecf6", color: "#1b2a5a" }}>✓</span>
-              <div><h3>Mistake review</h3><small>Questions you got wrong in tests</small></div>
+              <span
+                className="tb-letter off"
+                style={{ background: "#e8ecf6", color: "#1b2a5a" }}
+              >
+                ✓
+              </span>
+              <div>
+                <h3>Mistake review</h3>
+                <small>Questions you got wrong in tests</small>
+              </div>
             </div>
-            <div className="tb-chips"><span className="tb-chip">Retry your weak spots</span></div>
+            <div className="tb-chips">
+              <span className="tb-chip">Retry your weak spots</span>
+            </div>
           </button>
         </div>
       </section>

@@ -8,25 +8,38 @@ import { useProfile } from "../../hooks/useProfile.js";
 import { recordMistakes } from "../../services/firestore.js";
 import { isCorrect } from "../../components/QuestionRenderer.jsx";
 import { extendReadingMock } from "../../data/readingExtraQuestions.js";
+import {
+  buildVoiceMap,
+  whenVoicesReady,
+  sampleUtterance,
+  useVoiceList,
+} from "./voices.js";
 
 const GAP_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+// Listening timing
+const SECTION_WORDS = ["one", "two", "three"];
+const READ_SECONDS = 60;
+const REPLAY_GAP_MS = 5000;
 
 /*
   Mirrors the real Oxford-ELLT / TCY test-taking flow:
   list -> confirm -> welcome -> [volume check, listening only] -> test ->
   review checkpoint -> end confirm -> "test has ended" -> submitting -> result.
 
-  LISTENING
-  • There is NO "1 minute to read the questions" stage (the real exam has none).
-    The questions are on screen the whole time.
-  • The moment the student clicks "Start Section 1", the 26-minute timer AND
-    the Section 1 recording start together.
-  • Section 1 plays once, Sections 2–3 play twice. When the recording finishes
-    the test advances to the next section automatically (after Section 3 it
-    goes to the review screen).
-  • Audio uses the browser's text-to-speech, split into short chunks (long
-    utterances are silently cut off by Chrome), with a different voice/pitch
-    per speaker.
+  LISTENING (per section)
+  1. The student clicks "Start Section 1" -> the Section 1 questions (with
+     their options) are shown immediately and the main 26:00 timer starts.
+  2. A guiding voice says "You have one minute to read all the questions of
+     section X".
+  3. A 60-second reading countdown runs (questions stay visible).
+  4. The main recording plays. Section 1 plays once; Sections 2 and 3 play
+     twice, with a 5-second pause between the plays.
+  5. When the recording ends, the next section starts automatically with its
+     own guide voice + reading minute. After Section 3 the test goes to the
+     review checkpoint.
+  The student cannot skip ahead — sections only advance when the audio ends.
+  (The only exception: browsers with no speech support get a fallback button.)
 
   READING
   • Section 1 = drag-to-order only. Section 2 = sentence fill. Section 3 = 16
@@ -38,14 +51,22 @@ const CONFIG = {
     label: "Reading",
     mainSeconds: 2400,
     hasVolumeCheck: false,
-    sectionNames: ["Paragraph Ordering", "Sentence Fill", "Reading Comprehension"],
+    sectionNames: [
+      "Paragraph Ordering",
+      "Sentence Fill",
+      "Reading Comprehension",
+    ],
     tfLabels: ["True", "False", "Not Given"],
   },
   listening: {
     label: "Listening",
     mainSeconds: 1560,
     hasVolumeCheck: true,
-    sectionNames: ["Monologue (heard once)", "Interview (heard twice)", "Analysis (heard twice)"],
+    sectionNames: [
+      "Monologue (heard once)",
+      "Interview (heard twice)",
+      "Analysis (heard twice)",
+    ],
     tfLabels: ["True", "False", "Not Mentioned"],
   },
 };
@@ -58,7 +79,8 @@ function fmt(s) {
 
 function hashId(str) {
   let h = 0;
-  for (let i = 0; i < (str || "").length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < (str || "").length; i++)
+    h = (h * 31 + str.charCodeAt(i)) >>> 0;
   return 1000000 + (h % 9000000);
 }
 
@@ -92,7 +114,11 @@ function makeMistake(kind, mock, si, qi, q, yourAnswer) {
 /** Reading Section 3: one comprehension question per step. */
 function buildReadingSteps(mock, secIdx) {
   if (secIdx !== 2) return [];
-  return getSec(mock, 2).qs.map((q, qi) => ({ kind: "q", item: q, key: `2_q_${qi}` }));
+  return getSec(mock, 2).qs.map((q, qi) => ({
+    kind: "q",
+    item: q,
+    key: `2_q_${qi}`,
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,7 +126,7 @@ function buildReadingSteps(mock, secIdx) {
 /* ------------------------------------------------------------------ */
 
 /** Splits a script into short speakable chunks and tags each with a speaker
- *  index (so every speaker gets a different voice / pitch). */
+ *  index (so every speaker gets a different voice). */
 function buildChunks(script) {
   const speakers = [];
   const out = [];
@@ -113,7 +139,10 @@ function buildChunks(script) {
       speakers.push(who);
       idx = speakers.length - 1;
     }
-    const sentences = body.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/);
+    const sentences = body
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(/(?<=[.!?])\s+/);
     let buf = "";
     sentences.forEach((s) => {
       if (buf && (buf + " " + s).length > 170) {
@@ -127,17 +156,6 @@ function buildChunks(script) {
   });
   return out;
 }
-
-function englishVoices() {
-  const all = window.speechSynthesis.getVoices() || [];
-  const en = all.filter((v) => /^en/i.test(v.lang));
-  // prefer British voices first, like the real test
-  return en.sort((a, b) => Number(/en-GB/i.test(b.lang)) - Number(/en-GB/i.test(a.lang)));
-}
-
-const PITCHES = [1, 0.82, 1.18];
-
-
 
 export default function MockExam({ kind, mockId = null, exitTo = null }) {
   const cfg = CONFIG[kind];
@@ -181,10 +199,28 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
   const [needsGesture, setNeedsGesture] = useState(false);
   const [audioNonce, setAudioNonce] = useState(0);
 
+  // Per-section listening stage: "guide" (voice) -> "reading" (60s) -> "playing" -> "done"
+  const [listenStage, setListenStage] = useState("guide");
+  const [readLeft, setReadLeft] = useState(READ_SECONDS);
+  const [listenReview, setListenReview] = useState(false);
+
+  // Narrator voice chosen by the student on the volume-check screen (remembered).
+  const [voiceName, setVoiceName] = useState(() => {
+    try {
+      return localStorage.getItem("ellt_voice") || "";
+    } catch {
+      return "";
+    }
+  });
+  const voiceNameRef = useRef(voiceName);
+  voiceNameRef.current = voiceName;
+  const voiceList = useVoiceList(phase === "volume");
+
   const mainRef = useRef(null);
   const utterRef = useRef(null); // keeps the active utterance alive (Chrome garbage-collects it otherwise)
 
-  /* main countdown */
+  /* main countdown — starts as soon as the student clicks Start Section 1
+     (listening) or Start Test (reading). */
   useEffect(() => {
     clearInterval(mainRef.current);
     if (!started || ["ended", "submitting", "result"].includes(phase)) return;
@@ -202,9 +238,10 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started, phase]);
 
-  /* LISTENING AUDIO — plays the section, then auto-advances. */
+  /* LISTENING AUDIO — per section: guide voice -> 60s reading -> main
+     recording (x1 or x2, 5s apart) -> auto-advance. */
   useEffect(() => {
-    if (phase !== "test" || kind !== "listening" || !mock) return;
+    if (phase !== "test" || kind !== "listening" || !mock || listenReview) return;
     if (typeof window === "undefined" || !window.speechSynthesis) {
       setAudioUnsupported(true);
       setShowTranscript(true);
@@ -213,19 +250,27 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
     const synth = window.speechSynthesis;
     setAudioUnsupported(false);
     setNeedsGesture(false);
+    setListenStage("guide");
+    setReadLeft(READ_SECONDS);
+    setPlayRound(0);
+    setSpeaking(false);
 
     const sec = getSec(mock, secIdx);
     const chunks = buildChunks(sec.script);
+    const speakerCount = chunks.reduce((m, c) => Math.max(m, c.speaker + 1), 1);
     const rounds = secIdx === 0 ? 1 : 2;
     let cancelled = false;
     let round = 0;
     let i = 0;
     let gotStart = false;
+    let vmap = [];
+    let readInterval = null;
     const timers = [];
     const later = (fn, ms) => timers.push(setTimeout(fn, ms));
 
     function finish() {
       setSpeaking(false);
+      setListenStage("done");
       // short beat after the recording, then straight on to the next section
       later(() => {
         if (!cancelled) listeningNext();
@@ -239,7 +284,7 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
         setPlayRound(round);
         if (round < rounds) {
           i = 0;
-          later(speakNext, 4000); // pause between the two plays
+          later(speakNext, REPLAY_GAP_MS); // 5 seconds, then play again
         } else {
           finish();
         }
@@ -247,15 +292,20 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
       }
       const c = chunks[i++];
       const u = new SpeechSynthesisUtterance(c.text);
-      const voices = englishVoices();
-      if (voices.length) u.voice = voices[c.speaker % voices.length];
-      u.lang = u.voice?.lang || "en-GB";
-      u.rate = 0.95;
-      u.pitch = PITCHES[c.speaker % PITCHES.length];
-      u.onstart = () => {
-        gotStart = true;
+      const entry = vmap[c.speaker] || { voice: null, pitch: 1 };
+      if (entry.voice) {
+        u.voice = entry.voice;
+        u.lang = entry.voice.lang;
+      } else {
+        u.lang = "en-GB";
+      }
+      u.rate = 0.93;
+      u.pitch = entry.pitch;
+      u.onend = () => {
+        // natural pause: longer when the speaker changes
+        const next = chunks[i];
+        later(speakNext, next && next.speaker !== c.speaker ? 550 : 120);
       };
-      u.onend = () => speakNext();
       u.onerror = (e) => {
         if (cancelled) return;
         if (e.error === "not-allowed") {
@@ -269,45 +319,92 @@ export default function MockExam({ kind, mockId = null, exitTo = null }) {
       synth.speak(u);
     }
 
+    function startMain() {
+      if (cancelled) return;
+      setListenStage("playing");
+      setSpeaking(true);
+      vmap = buildVoiceMap(speakerCount, voiceNameRef.current);
+      later(speakNext, 400);
+    }
+
+    function startReadingMinute() {
+      if (cancelled) return;
+      setListenStage("reading");
+      let left = READ_SECONDS;
+      setReadLeft(left);
+      readInterval = setInterval(() => {
+        left -= 1;
+        setReadLeft(left);
+        if (left <= 0) {
+          clearInterval(readInterval);
+          readInterval = null;
+          startMain();
+        }
+      }, 1000);
+    }
+
+    function speakGuide() {
+      if (cancelled) return;
+      const u = sampleUtterance(
+        `You have one minute to read all the questions of section ${SECTION_WORDS[secIdx]}.`,
+        voiceNameRef.current,
+      );
+      u.onstart = () => {
+        gotStart = true;
+      };
+      u.onend = startReadingMinute;
+      u.onerror = (e) => {
+        if (cancelled) return;
+        if (e.error === "not-allowed") {
+          setNeedsGesture(true);
+          return;
+        }
+        startReadingMinute();
+      };
+      utterRef.current = u;
+      synth.speak(u);
+    }
+
     synth.cancel();
-    setPlayRound(0);
-    setSpeaking(true);
-    // Chrome needs a moment after cancel() and for the voice list to load.
-    later(speakNext, 400);
-    // If nothing has started after 5s the browser blocked autoplay.
+    // Voices load asynchronously — wait for them, then start the guide voice.
+    const stopWaiting = whenVoicesReady(() => {
+      if (cancelled) return;
+      later(speakGuide, 250);
+    });
+    // If nothing has started after 7s the browser blocked autoplay.
     later(() => {
-      if (!gotStart && !cancelled) {
-        setNeedsGesture(true);
-        setSpeaking(false);
-      }
-    }, 5000);
+      if (!gotStart && !cancelled) setNeedsGesture(true);
+    }, 7000);
 
     return () => {
       cancelled = true;
+      stopWaiting();
       timers.forEach(clearTimeout);
+      if (readInterval) clearInterval(readInterval);
       synth.cancel();
       setSpeaking(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, secIdx, kind, mock, audioNonce]);
+  }, [phase, secIdx, kind, mock, audioNonce, listenReview]);
 
   useEffect(
     () => () => {
       clearInterval(mainRef.current);
-      if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+      if (typeof window !== "undefined" && window.speechSynthesis)
+        window.speechSynthesis.cancel();
     },
     [],
   );
-const autoStarted = useRef(false);
-useEffect(() => {
-  if (mockId == null || autoStarted.current || mocksLoading) return;
-  const m = mocks.find((x) => x.id === mockId);
-  if (!m) return;
-  autoStarted.current = true;
-  setMock(m);
-  confirmTake();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [mockId, mocks, mocksLoading]);
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (mockId == null || autoStarted.current || mocksLoading) return;
+    const m = mocks.find((x) => x.id === mockId);
+    if (!m) return;
+    autoStarted.current = true;
+    setMock(m);
+    confirmTake();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mockId, mocks, mocksLoading]);
   function openConfirm(m) {
     setMock(m);
     setPhase("confirm");
@@ -329,6 +426,9 @@ useEffect(() => {
     setDragLabel(null);
     setPlayRound(0);
     setNeedsGesture(false);
+    setListenStage("guide");
+    setReadLeft(READ_SECONDS);
+    setListenReview(false);
     setPhase("welcome");
   }
   function startTest() {
@@ -339,24 +439,29 @@ useEffect(() => {
       setPhase("test");
     }
   }
-  /** Starts the 26-minute timer AND the Section 1 recording together. */
+  /** Start Section 1: main timer starts immediately and the test opens on
+   *  the Section 1 questions; the listening effect plays the guide voice,
+   *  runs the 60s reading minute, then the recording. */
   function volumeContinue() {
-    if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    if (typeof window !== "undefined" && window.speechSynthesis)
+      window.speechSynthesis.cancel();
+    setSecIdx(0);
     setStarted(true);
     setPhase("test");
   }
-  function playVolumeTest() {
+  function playVolumeTest(nameOverride) {
     setVolChecked(true);
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     const synth = window.speechSynthesis;
     synth.cancel();
-    const u = new SpeechSynthesisUtterance(
-      "This is an audio check. If you can hear my voice clearly, you are ready to start the test.",
-    );
-    u.lang = "en-GB";
-    u.rate = 0.95;
-    utterRef.current = u;
-    synth.speak(u);
+    whenVoicesReady(() => {
+      const u = sampleUtterance(
+        "This is an audio check. If you can hear my voice clearly, you are ready to start the test.",
+        typeof nameOverride === "string" ? nameOverride : voiceNameRef.current,
+      );
+      utterRef.current = u;
+      synth.speak(u);
+    });
   }
   function setAnswer(key, value) {
     setUA((prev) => ({ ...prev, [key]: value }));
@@ -391,7 +496,8 @@ useEffect(() => {
     }
   }
   function listeningNext() {
-    if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    if (typeof window !== "undefined" && window.speechSynthesis)
+      window.speechSynthesis.cancel();
     setSpeaking(false);
     if (secIdx < 2) {
       setSecIdx(secIdx + 1);
@@ -402,8 +508,13 @@ useEffect(() => {
   }
 
   function reviewFromCheckpoint() {
-    setQIdx(kind === "reading" ? Math.max(buildReadingSteps(mock, 2).length - 1, 0) : 0);
-    if (kind === "reading") setSecIdx(2);
+    if (kind === "listening") {
+      setListenReview(true); // no audio replay during review
+      setPhase("test");
+      return;
+    }
+    setQIdx(Math.max(buildReadingSteps(mock, 2).length - 1, 0));
+    setSecIdx(2);
     setPhase("test");
   }
 
@@ -441,7 +552,10 @@ useEffect(() => {
         if (UA["fill_" + q.n] === q.ans) {
           score++;
           secScores[1]++;
-        } else wrongMistakes.push(makeMistake("reading", mock, 1, qi, q, UA["fill_" + q.n]));
+        } else
+          wrongMistakes.push(
+            makeMistake("reading", mock, 1, qi, q, UA["fill_" + q.n]),
+          );
       });
       getSec(mock, 2).qs.forEach((q, qi) => {
         totalQs++;
@@ -450,7 +564,8 @@ useEffect(() => {
         if (UA[key] === q.ans) {
           score++;
           secScores[2]++;
-        } else wrongMistakes.push(makeMistake("reading", mock, 2, qi, q, UA[key]));
+        } else
+          wrongMistakes.push(makeMistake("reading", mock, 2, qi, q, UA[key]));
       });
     } else {
       [0, 1, 2].forEach((si) => {
@@ -461,14 +576,25 @@ useEffect(() => {
           if (isCorrect(q, UA[key])) {
             score++;
             secScores[si]++;
-          } else wrongMistakes.push(makeMistake("listening", mock, si, qi, q, UA[key]));
+          } else
+            wrongMistakes.push(
+              makeMistake("listening", mock, si, qi, q, UA[key]),
+            );
         });
       });
     }
 
     const pct = Math.round((score / totalQs) * 100);
     const band =
-      pct >= 87 ? "Level 7" : pct >= 75 ? "Level 6.5" : pct >= 62 ? "Level 6" : pct >= 50 ? "Level 5.5" : "Below 5.5";
+      pct >= 87
+        ? "Level 7"
+        : pct >= 75
+          ? "Level 6.5"
+          : pct >= 62
+            ? "Level 6"
+            : pct >= 50
+              ? "Level 5.5"
+              : "Below 5.5";
 
     setResult({ score, total: totalQs, pct, band, secScores, secTotals });
 
@@ -484,22 +610,32 @@ useEffect(() => {
     }).catch((e) => console.error("saveAttempt failed", e));
 
     if (user && wrongMistakes.length) {
-      recordMistakes(user.uid, wrongMistakes).catch((e) => console.error("recordMistakes failed", e));
+      recordMistakes(user.uid, wrongMistakes).catch((e) =>
+        console.error("recordMistakes failed", e),
+      );
     }
   }
 
-function backToList() {
-  if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
-  if (exitTo) { navigate(exitTo); return; }
-  setPhase("list");
-  setMock(null);
-  setResult(null);
-}
+  function backToList() {
+    if (typeof window !== "undefined" && window.speechSynthesis)
+      window.speechSynthesis.cancel();
+    if (exitTo) {
+      navigate(exitTo);
+      return;
+    }
+    setPhase("list");
+    setMock(null);
+    setResult(null);
+  }
 
   /* ================= LIST ================= */
   if (mockId != null && (phase === "list" || phase === "confirm")) {
-  return <div className="adm-empty">{mocksLoading ? "Loading test…" : "Test not found."}</div>;
-}
+    return (
+      <div className="adm-empty">
+        {mocksLoading ? "Loading test…" : "Test not found."}
+      </div>
+    );
+  }
   if (phase === "list" || phase === "confirm") {
     const uidNum = hashId(user?.uid || displayName);
     return (
@@ -515,7 +651,8 @@ function backToList() {
           {mocksLoading && <div className="adm-empty">Loading mocks…</div>}
           {!mocksLoading && mocks.length === 0 && (
             <div className="adm-empty">
-              No {cfg.label.toLowerCase()} mocks have been published yet. Check back soon, or ask an admin to add some.
+              No {cfg.label.toLowerCase()} mocks have been published yet. Check
+              back soon, or ask an admin to add some.
             </div>
           )}
           {mocks.map((m) => {
@@ -525,10 +662,15 @@ function backToList() {
               <div className="tcy-card" key={m.id}>
                 <div className="tcy-card-top">
                   <div className="tcy-card-title">
-                    <span className="ic">{kind === "reading" ? "📖" : "🎧"}</span>
+                    <span className="ic">
+                      {kind === "reading" ? "📖" : "🎧"}
+                    </span>
                     Oxford ELLT {cfg.label} - {m.id}
                   </div>
-                  <button className="tcy-btn-gold" onClick={() => openConfirm(m)}>
+                  <button
+                    className="tcy-btn-gold"
+                    onClick={() => openConfirm(m)}
+                  >
                     Take Test
                   </button>
                 </div>
@@ -561,7 +703,8 @@ function backToList() {
               <div className="q-ic">?</div>
               <h2>Are you sure?</h2>
               <p>
-                You will need <b>{Math.round(cfg.mainSeconds / 60)} minutes</b> to take this test.
+                You will need <b>{Math.round(cfg.mainSeconds / 60)} minutes</b>{" "}
+                to take this test.
               </p>
               <div className="tcy-modal-btns">
                 <button className="tcy-btn-gray" onClick={cancelConfirm}>
@@ -587,16 +730,23 @@ function backToList() {
           <h2>Welcome to the Oxford ELLT {cfg.label} Test</h2>
           {kind === "reading" ? (
             <p>
-              Make sure to respond to each question. You should attempt to answer <b>all</b> the questions.
+              Make sure to respond to each question. You should attempt to
+              answer <b>all</b> the questions.
             </p>
           ) : (
             <p>
-              Each recording plays automatically. Section 1 is played once; Sections 2 and 3 are played twice. When a
-              recording ends, the test moves on to the next section by itself, so listen carefully and answer{" "}
+              When you click Start, the timer begins. Before each section a
+              voice will give you one minute to read the questions, then the
+              recording plays automatically. Section 1 is played once;
+              Sections 2 and 3 are played twice. When a recording ends, the
+              test moves on by itself, so listen carefully and answer{" "}
               <b>all</b> the questions.
             </p>
           )}
-          <p>Each question is worth 1 point. You will be instructed on how to answer each question.</p>
+          <p>
+            Each question is worth 1 point. You will be instructed on how to
+            answer each question.
+          </p>
           <p>
             Click <b>Start Test</b> to get started.
           </p>
@@ -617,17 +767,49 @@ function backToList() {
           <div className="tcy-volume-left">
             <h2>Changing the Volume</h2>
             <p>
-              Use your device's volume control to set a comfortable level. Click the big speaker icon to play a test
-              sound.
+              Use your device's volume control to set a comfortable level. Click
+              the big speaker icon to play a test sound.
             </p>
             <p>
-              When you click <b>Start Section 1</b>, the timer and the first recording start at the same time.
+              When you click <b>Start Section 1</b>, the timer starts and a
+              voice will tell you that you have one minute to read the
+              questions. When that minute is up, the recording starts
+              automatically.
             </p>
+            {voiceList.length > 1 && (
+              <label className="tcy-voice-pick">
+                <span>Narrator voice</span>
+                <select
+                  value={voiceName}
+                  onChange={(e) => {
+                    const n = e.target.value;
+                    setVoiceName(n);
+                    try {
+                      localStorage.setItem("ellt_voice", n);
+                    } catch {
+                      /* ignore */
+                    }
+                    playVolumeTest(n);
+                  }}
+                >
+                  <option value="">Automatic (best available)</option>
+                  {voiceList.map((v) => (
+                    <option key={v.name} value={v.name}>
+                      {v.name}
+                      {v.natural ? " ★" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button className="tcy-vol-icon-btn">🔊</button>
           </div>
           <div className="tcy-volume-right">
             <div className="lead">This section requires audio.</div>
-            <button className={"tcy-vol-big" + (volChecked ? " checked" : "")} onClick={playVolumeTest}>
+            <button
+              className={"tcy-vol-big" + (volChecked ? " checked" : "")}
+              onClick={() => playVolumeTest()}
+            >
               🔊
             </button>
             <div className="hint">
@@ -665,9 +847,17 @@ function backToList() {
     }
 
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
-        <div className="tcy-sec-label">Section 1/3 — Paragraph Ordering</div>
-        <div className="tcy-qsub" style={{ textAlign: "center", marginBottom: 22 }}>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
+        <div className="tcy-sec-label">Section 1/3 Paragraph Ordering</div>
+        <div
+          className="tcy-qsub"
+          style={{ textAlign: "center", marginBottom: 22 }}
+        >
           Drag the paragraphs into the correct order.
         </div>
         <div className="order-list">
@@ -684,7 +874,9 @@ function backToList() {
                   moveTo(label);
                 }}
                 onDrop={(e) => e.preventDefault()}
-                className={"order-item" + (dragLabel === label ? " selected" : "")}
+                className={
+                  "order-item" + (dragLabel === label ? " selected" : "")
+                }
               >
                 <span className="order-pos">{idx + 1}</span>
                 <span className="order-handle">⠿⠿</span>
@@ -711,10 +903,16 @@ function backToList() {
   if (phase === "test" && kind === "reading" && secIdx === 1) {
     const sec = getSec(mock, 1);
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
-        <div className="tcy-sec-label">Section 2/3 — Sentence Fill</div>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
+        <div className="tcy-sec-label">Section 2/3 Sentence Fill</div>
         <div className="tcy-qsub" style={{ marginBottom: 16 }}>
-          Choose the correct sentence for each gap using the A–H selector at that gap. One sentence is not used.
+          Choose the correct sentence for each gap using the A–H selector at
+          that gap. One sentence is not used.
         </div>
         <div className="sec2-split">
           <GappedPassage html={sec.textHtml} UA={UA} onAnswer={setAnswer} />
@@ -747,7 +945,12 @@ function backToList() {
     const step = steps[idx];
     const sec = getSec(mock, 2);
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
         <div className="tcy-sec-label">Section 3/3</div>
         <div className="tcy-q-count">
           Question {idx + 1} out of {steps.length}
@@ -761,7 +964,10 @@ function backToList() {
               tfLabels={cfg.tfLabels}
             />
           </div>
-          <div className="tcy-passside" dangerouslySetInnerHTML={{ __html: sec.passHtml }} />
+          <div
+            className="tcy-passside"
+            dangerouslySetInnerHTML={{ __html: sec.passHtml }}
+          />
         </div>
         <div className="tcy-nav-row">
           <button className="tcy-btn-gray" onClick={prevStep}>
@@ -777,10 +983,62 @@ function backToList() {
 
   /* ---- Listening ---- */
   if (phase === "test" && kind === "listening") {
+    /* Review mode (from checkpoint): all questions, no audio. */
+    if (listenReview) {
+      return (
+        <Shell
+          title={titleBar}
+          onBack={backToList}
+          timer={fmt(mainLeft)}
+          showTimer={started}
+        >
+          <div className="tcy-sec-label">Review your answers</div>
+          {[0, 1, 2].map((si) => (
+            <div key={si}>
+              <div className="tcy-sec-label">Section {si + 1}/3</div>
+              {getSec(mock, si).qs.map((q, qi) => {
+                const key = `${si}_q_${qi}`;
+                return (
+                  <div className="tcy-lq-block" key={key}>
+                    <div className="tcy-lq-head">
+                      <b>Question {listeningQNumber(mock, si, qi)}</b>
+                    </div>
+                    <ChoiceQuestion
+                      q={q}
+                      answer={UA[key]}
+                      onAnswer={(v) => setAnswer(key, v)}
+                      tfLabels={cfg.tfLabels}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          <div className="tcy-nav-row">
+            <div />
+            <button
+              className="tcy-btn-gold"
+              onClick={() => {
+                setListenReview(false);
+                setPhase("checkpoint");
+              }}
+            >
+              Done →
+            </button>
+          </div>
+        </Shell>
+      );
+    }
+
     const sec = getSec(mock, secIdx);
     const timesToPlay = secIdx === 0 ? 1 : 2;
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
         <div
           className={"tcy-audio-fab" + (speaking ? " live" : "")}
           title={speaking ? "Playing…" : "Audio stopped"}
@@ -794,12 +1052,19 @@ function backToList() {
           ) : needsGesture ? (
             <>
               Your browser blocked the audio.
-              <button className="tcy-play-btn" onClick={() => setAudioNonce((n) => n + 1)}>
-                ▶ Play recording
+              <button
+                className="tcy-play-btn"
+                onClick={() => setAudioNonce((n) => n + 1)}
+              >
+                ▶ Start audio
               </button>
             </>
-          ) : speaking ? (
-            `🔊 Playing${timesToPlay > 1 ? ` (play ${Math.min(playRound + 1, timesToPlay)} of ${timesToPlay})` : ""}… the next section opens automatically when the recording ends.`
+          ) : listenStage === "guide" ? (
+            `🔊 You have one minute to read all the questions of section ${SECTION_WORDS[secIdx]}.`
+          ) : listenStage === "reading" ? (
+            `⏱ Read the questions — the recording starts in ${fmt(readLeft)}`
+          ) : listenStage === "playing" ? (
+            `🔊 Playing${timesToPlay > 1 ? ` (play ${Math.min(playRound + 1, timesToPlay)} of ${timesToPlay})` : ""}… ${secIdx < 2 ? "the next section starts automatically when the recording ends." : "the test continues automatically when the recording ends."}`
           ) : (
             "Recording finished."
           )}
@@ -808,7 +1073,7 @@ function backToList() {
         {sec.qs.map((q, qi) => {
           const key = `${secIdx}_q_${qi}`;
           return (
-            <div className="tcy-lq-block" key={qi}>
+            <div className="tcy-lq-block" key={`${secIdx}-${qi}`}>
               <div className="tcy-lq-head">
                 <b>Question {listeningQNumber(mock, secIdx, qi)}</b>
               </div>
@@ -819,40 +1084,52 @@ function backToList() {
                     ? "Select ONE speaker"
                     : "Select ONE answer only (1 point)"}
               </div>
-              <ChoiceQuestion q={q} answer={UA[key]} onAnswer={(v) => setAnswer(key, v)} tfLabels={cfg.tfLabels} />
+              <ChoiceQuestion
+                q={q}
+                answer={UA[key]}
+                onAnswer={(v) => setAnswer(key, v)}
+                tfLabels={cfg.tfLabels}
+              />
             </div>
           );
         })}
 
-        <button className="tcy-transcript-toggle" onClick={() => setShowTranscript((v) => !v)}>
-          {showTranscript ? "Hide transcript (practice mode)" : "Show transcript (practice mode)"}
-        </button>
-        {showTranscript && (
-          <div className="tcy-transcript">
-            <b>Transcript:</b>
-            {"\n\n" + sec.script}
-          </div>
+        {/* Transcript toggle removed to match the real exam.
+            Fallback only when the browser has no speech support at all: */}
+        {audioUnsupported && (
+          <>
+            <div className="tcy-transcript">
+              <b>Transcript:</b>
+              {"\n\n" + sec.script}
+            </div>
+            <div className="tcy-nav-row">
+              <div />
+              <button className="tcy-btn-gray" onClick={listeningNext}>
+                {secIdx === 2 ? "Finish Section →" : "Next Section →"}
+              </button>
+            </div>
+          </>
         )}
-
-        <div className="tcy-nav-row">
-          <div />
-          <button className="tcy-btn-gray" onClick={listeningNext}>
-            {secIdx === 2 ? "Finish Section →" : "Skip to Next Section →"}
-          </button>
-        </div>
       </Shell>
     );
   }
 
   if (phase === "checkpoint") {
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
         <div className="tcy-review">
           <h2>You still have time to review your answers</h2>
           <div className="timeleft">
             You have <b>{fmt(mainLeft)}</b> remaining.
           </div>
-          <div className="ask">Would you like to review all the test questions?</div>
+          <div className="ask">
+            Would you like to review all the test questions?
+          </div>
           <button className="tcy-btn-gold" onClick={reviewFromCheckpoint}>
             Review
           </button>
@@ -861,7 +1138,10 @@ function backToList() {
           <button className="tcy-btn-gold" onClick={reviewFromCheckpoint}>
             ← Previous
           </button>
-          <button className="tcy-btn-gold" onClick={() => setPhase("endConfirm")}>
+          <button
+            className="tcy-btn-gold"
+            onClick={() => setPhase("endConfirm")}
+          >
             Submit Test →
           </button>
         </div>
@@ -871,17 +1151,28 @@ function backToList() {
 
   if (phase === "endConfirm") {
     return (
-      <Shell title={titleBar} onBack={backToList} timer={fmt(mainLeft)} showTimer={started}>
+      <Shell
+        title={titleBar}
+        onBack={backToList}
+        timer={fmt(mainLeft)}
+        showTimer={started}
+      >
         <div className="tcy-overlay">
           <div className="tcy-modal">
             <div className="q-ic">?</div>
             <h2>Are you sure?</h2>
             <p>Have you answered all the questions?</p>
             <div className="tcy-modal-btns">
-              <button className="tcy-btn-gray" onClick={() => setPhase("checkpoint")}>
+              <button
+                className="tcy-btn-gray"
+                onClick={() => setPhase("checkpoint")}
+              >
                 Return
               </button>
-              <button className="tcy-btn-gold" onClick={() => setPhase("ended")}>
+              <button
+                className="tcy-btn-gold"
+                onClick={() => setPhase("ended")}
+              >
                 End Section
               </button>
             </div>
@@ -927,7 +1218,8 @@ function backToList() {
 
   if (phase === "result" && result) {
     const color = result.pct >= 62 ? "#1f8a3d" : "#c9781e";
-    const bg = result.pct >= 62 ? "rgba(63,185,80,.12)" : "rgba(232,184,75,.15)";
+    const bg =
+      result.pct >= 62 ? "rgba(63,185,80,.12)" : "rgba(232,184,75,.15)";
     return (
       <Shell title={titleBar} onBack={backToList} timer={null}>
         <div className="tcy-result-card">
@@ -943,7 +1235,8 @@ function backToList() {
             {cfg.sectionNames.map((n, i) => (
               <div className="tcy-sec-score-box" key={i}>
                 <div className="n">
-                  {result.secScores[i]}/{result.secTotals ? result.secTotals[i] : 0}
+                  {result.secScores[i]}/
+                  {result.secTotals ? result.secTotals[i] : 0}
                 </div>
                 <div className="l">
                   S{i + 1}
@@ -989,8 +1282,11 @@ function backToList() {
 }
 
 function cardTotal(kind, m) {
-  if (kind === "reading") return m.s1.paras.length + m.s2.qs.length + m.s3.qs.length;
-  return getSec(m, 0).qs.length + getSec(m, 1).qs.length + getSec(m, 2).qs.length;
+  if (kind === "reading")
+    return m.s1.paras.length + m.s2.qs.length + m.s3.qs.length;
+  return (
+    getSec(m, 0).qs.length + getSec(m, 1).qs.length + getSec(m, 2).qs.length
+  );
 }
 
 function Shell({ title, onBack, timer, showTimer = true, children }) {
@@ -1001,7 +1297,6 @@ function Shell({ title, onBack, timer, showTimer = true, children }) {
           <button className="tcy-back" onClick={onBack}>
             ←
           </button>
-          
         </div>
         {timer && showTimer && <div className="tcy-topbar-timer">{timer}</div>}
         {/* <button className="tcy-hamburger">☰</button> */}
@@ -1033,7 +1328,9 @@ function GappedPassage({ html, UA, onAnswer }) {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const nodes = Array.from(containerRef.current.querySelectorAll(".gap-slot"));
+    const nodes = Array.from(
+      containerRef.current.querySelectorAll(".gap-slot"),
+    );
     setSlots(nodes.map((el) => ({ n: parseInt(el.dataset.gap, 10), el })));
   }, [slotHtml]);
 
@@ -1079,13 +1376,22 @@ function ChoiceQuestion({ q, answer, onAnswer, tfLabels }) {
     );
   }
   if (q.type === "spk") {
-    const labels = ["Speaker A", "Speaker B", "Speaker C", "None of the speakers"];
+    const labels = [
+      "Speaker A",
+      "Speaker B",
+      "Speaker C",
+      "None of the speakers",
+    ];
     return (
       <>
         <div className="tcy-qtext">{q.text}</div>
         <div className="tcy-opts">
           {labels.map((lbl, i) => (
-            <button key={i} className={"tcy-opt" + (answer === i ? " sel" : "")} onClick={() => onAnswer(i)}>
+            <button
+              key={i}
+              className={"tcy-opt" + (answer === i ? " sel" : "")}
+              onClick={() => onAnswer(i)}
+            >
               <span className="tcy-opt-l">{String.fromCharCode(65 + i)}</span>
               <span>{lbl}</span>
             </button>
@@ -1100,7 +1406,11 @@ function ChoiceQuestion({ q, answer, onAnswer, tfLabels }) {
         <div className="tcy-qtext">{q.text}</div>
         <div className="tcy-opts">
           {tfLabels.map((lbl, i) => (
-            <button key={i} className={"tcy-opt" + (answer === i ? " sel" : "")} onClick={() => onAnswer(i)}>
+            <button
+              key={i}
+              className={"tcy-opt" + (answer === i ? " sel" : "")}
+              onClick={() => onAnswer(i)}
+            >
               <span className="tcy-opt-l">{String.fromCharCode(65 + i)}</span>
               <span>{lbl}</span>
             </button>
@@ -1111,13 +1421,24 @@ function ChoiceQuestion({ q, answer, onAnswer, tfLabels }) {
   }
   return (
     <>
-      <div className="tcy-qtext" dangerouslySetInnerHTML={{ __html: highlightWord(q.text) }} />
+      <div
+        className="tcy-qtext"
+        dangerouslySetInnerHTML={{ __html: highlightWord(q.text) }}
+      />
       <div className="tcy-qsub">Select ONE answer only (1 point)</div>
       <div className="tcy-opts">
         {q.opts?.map((opt, i) => (
-          <button key={i} className={"tcy-opt" + (answer === i ? " sel" : "")} onClick={() => onAnswer(i)}>
+          <button
+            key={i}
+            className={"tcy-opt" + (answer === i ? " sel" : "")}
+            onClick={() => onAnswer(i)}
+          >
             <span className="tcy-opt-l">{String.fromCharCode(65 + i)}</span>
-            <span>{opt.length > 3 && /^[A-D]\)?\.?\s/.test(opt) ? opt.slice(3) : opt}</span>
+            <span>
+              {opt.length > 3 && /^[A-D]\)?\.?\s/.test(opt)
+                ? opt.slice(3)
+                : opt}
+            </span>
           </button>
         ))}
       </div>
@@ -1144,7 +1465,9 @@ function lessonsFor(kind, result) {
       items.push(
         "Section 3: Q1–4 are vocabulary — define the word before checking context. For the rest, find where the answer is in the passage before looking at the options.",
       );
-    items.push("Trust your first answer — changing answers usually lowers scores, not raises them.");
+    items.push(
+      "Trust your first answer — changing answers usually lowers scores, not raises them.",
+    );
   } else {
     if (result.secScores[0] < 6)
       items.push(
@@ -1159,7 +1482,7 @@ function lessonsFor(kind, result) {
         '"None" is correct when no speaker fully expresses the idea. A related mention is not the same as agreement.',
       );
     items.push(
-      "Before each recording starts, there is no preview time — skim the options quickly and circle the word that makes each one different.",
+      "Use the one-minute reading time before each recording: skim the options and circle the word that makes each one different.",
     );
   }
   return items;

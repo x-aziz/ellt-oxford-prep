@@ -9,8 +9,12 @@ const SKILL_META = {
   writing: { label: 'Writing', types: WRITING_DRILL_TYPES },
 };
 
+// exercise.count = number of gradable questions (gaps, paragraphs, items)
 function countItems(type) {
-  return type.exercises.reduce((n, ex) => n + (ex.items ? ex.items.length : 1), 0);
+  return type.exercises.reduce(
+    (n, ex) => n + (ex.count ?? (ex.items ? ex.items.length : 1)),
+    0,
+  );
 }
 
 export default function DrillTypesHub() {
@@ -49,6 +53,7 @@ export default function DrillTypesHub() {
                 <span className="lbl">Description</span>
                 <div>{t.desc}</div>
                 <div>- {t.exercises.length} exercise{t.exercises.length === 1 ? '' : 's'} · {totalItems} questions</div>
+                {skill === 'listening' && <div>- 🎧 Audio included (Google UK English voices)</div>}
               </div>
             </div>
           );

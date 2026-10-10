@@ -3,12 +3,12 @@
 // so re-missing the same question just bumps its "times wrong" counter
 // instead of creating a duplicate).
 
-import { READING_MOCKS } from './readingMocks.js';
-import { LISTENING_MOCKS } from './listeningMocks.js';
+import { READING_MOCKS } from "./readingMocks.js";
+import { LISTENING_MOCKS } from "./listeningMocks.js";
 
 const SECTION_LABEL = {
-  reading: ['S1 — Ordering', 'S2 — Sentence Fill', 'S3 — Comprehension'],
-  listening: ['S1 — Monologue', 'S2 — Gap Fill', 'S3 — Speaker Match'],
+  reading: ["S1   Ordering", "S2   Sentence Fill", "S3   Comprehension"],
+  listening: ["S1   Monologue", "S2   Gap Fill", "S3   Speaker Match"],
 };
 
 function flattenSource(mocks, source) {
@@ -33,8 +33,8 @@ function flattenSource(mocks, source) {
 }
 
 export const ALL_QUESTIONS = [
-  ...flattenSource(READING_MOCKS, 'reading'),
-  ...flattenSource(LISTENING_MOCKS, 'listening'),
+  ...flattenSource(READING_MOCKS, "reading"),
+  ...flattenSource(LISTENING_MOCKS, "listening"),
 ];
 
 export function getQuestionById(id) {

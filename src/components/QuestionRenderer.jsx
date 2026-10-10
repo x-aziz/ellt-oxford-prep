@@ -9,41 +9,41 @@
 */
 
 const TAG_LABEL = {
-  mc: 'COMPREHENSION',
-  v: 'VOCABULARY',
-  inf: 'INFERENCE',
-  p: 'PARAPHRASE',
-  e: 'EXCEPT',
-  g: 'GIST',
-  gist: 'GENERAL GIST',
-  tf: 'TRUE / FALSE / NOT GIVEN',
-  gap: 'GAP FILL',
-  spk: 'SPEAKER MATCH',
+  mc: "COMPREHENSION",
+  v: "VOCABULARY",
+  inf: "INFERENCE",
+  p: "PARAPHRASE",
+  e: "EXCEPT",
+  g: "GIST",
+  gist: "GENERAL GIST",
+  tf: "TRUE / FALSE / NOT GIVEN",
+  gap: "GAP FILL",
+  spk: "SPEAKER MATCH",
 };
 
 const TAG_CLASS = {
-  mc: 'tag-c',
-  v: 'tag-v',
-  inf: 'tag-i',
-  p: 'tag-p',
-  e: 'tag-e',
-  g: 'tag-o',
-  gist: 'tag-gist',
-  tf: 'tag-tf',
-  gap: 'tag-gap',
-  spk: 'tag-spk',
+  mc: "tag-c",
+  v: "tag-v",
+  inf: "tag-i",
+  p: "tag-p",
+  e: "tag-e",
+  g: "tag-o",
+  gist: "tag-gist",
+  tf: "tag-tf",
+  gap: "tag-gap",
+  spk: "tag-spk",
 };
 
 export function normalizeGap(s) {
-  return (s || '')
+  return (s || "")
     .trim()
     .toLowerCase()
-    .replace(/[.,!?;:]/g, '')
-    .replace(/\s+/g, ' ');
+    .replace(/[.,!?;:]/g, "")
+    .replace(/\s+/g, " ");
 }
 
 export function isCorrect(q, answer) {
-  if (q.type === 'gap') return normalizeGap(answer) === normalizeGap(q.ans);
+  if (q.type === "gap") return normalizeGap(answer) === normalizeGap(q.ans);
   return answer === q.ans;
 }
 
@@ -53,51 +53,59 @@ export default function QuestionRenderer({
   answer,
   submitted,
   onAnswer,
-  tfLabels = ['True', 'False', 'Not Given'],
-  spkLabels = ['Speaker A', 'Speaker B', 'Speaker C', 'None of the speakers'],
+  tfLabels = ["True", "False", "Not Given"],
+  spkLabels = ["Speaker A", "Speaker B", "Speaker C", "None of the speakers"],
 }) {
-  const answered = answer !== undefined && answer !== '';
+  const answered = answer !== undefined && answer !== "";
   const correct = submitted && isCorrect(q, answer);
   const wrong = submitted && answered && !correct;
 
-  let cardClass = 'qcard';
-  if (submitted) cardClass += correct ? ' correct' : wrong ? ' wrong' : '';
-  else if (answered) cardClass += ' answered';
+  let cardClass = "qcard";
+  if (submitted) cardClass += correct ? " correct" : wrong ? " wrong" : "";
+  else if (answered) cardClass += " answered";
 
   return (
     <div className={cardClass}>
       <div className="q-meta">
         <div className="q-num">{number}</div>
-        <span className={'q-tag ' + (TAG_CLASS[q.type] || 'tag-c')}>
-          {TAG_LABEL[q.type] || 'QUESTION'}
+        <span className={"q-tag " + (TAG_CLASS[q.type] || "tag-c")}>
+          {TAG_LABEL[q.type] || "QUESTION"}
         </span>
       </div>
       <div className="q-text">{q.text}</div>
 
-      {q.type === 'gap' && (
+      {q.type === "gap" && (
         <>
           <input
             className={
-              'gap-input' + (submitted ? (isCorrect(q, answer) ? ' ok' : ' wrong') : '')
+              "gap-input" +
+              (submitted ? (isCorrect(q, answer) ? " ok" : " wrong") : "")
             }
             type="text"
             placeholder="Type 1–3 exact words…"
-            value={answer || ''}
+            value={answer || ""}
             disabled={submitted}
             onChange={(e) => onAnswer(e.target.value)}
           />
-          {q.hint && !submitted && <div className="gap-hint">Hint: {q.hint}</div>}
+          {q.hint && !submitted && (
+            <div className="gap-hint">Hint: {q.hint}</div>
+          )}
         </>
       )}
 
-      {q.type === 'spk' && (
+      {q.type === "spk" && (
         <select
-          className={'spk-sel' + (submitted ? (isCorrect(q, answer) ? ' ok' : ' wrong') : '')}
+          className={
+            "spk-sel" +
+            (submitted ? (isCorrect(q, answer) ? " ok" : " wrong") : "")
+          }
           disabled={submitted}
-          value={answer ?? ''}
-          onChange={(e) => onAnswer(e.target.value === '' ? undefined : Number(e.target.value))}
+          value={answer ?? ""}
+          onChange={(e) =>
+            onAnswer(e.target.value === "" ? undefined : Number(e.target.value))
+          }
         >
-          <option value="">— Select speaker —</option>
+          <option value=""> Select speaker </option>
           {spkLabels.map((lbl, i) => (
             <option key={i} value={i}>
               {lbl}
@@ -106,14 +114,14 @@ export default function QuestionRenderer({
         </select>
       )}
 
-      {q.type === 'tf' && (
+      {q.type === "tf" && (
         <div className="tf-row">
           {tfLabels.map((lbl, i) => {
-            let cls = 'tfb';
+            let cls = "tfb";
             if (submitted) {
-              if (i === q.ans) cls += ' ok';
-              else if (answer === i) cls += ' wrong';
-            } else if (answer === i) cls += ' sel';
+              if (i === q.ans) cls += " ok";
+              else if (answer === i) cls += " wrong";
+            } else if (answer === i) cls += " sel";
             return (
               <button
                 key={i}
@@ -129,13 +137,13 @@ export default function QuestionRenderer({
         </div>
       )}
 
-      {!['gap', 'spk', 'tf'].includes(q.type) &&
+      {!["gap", "spk", "tf"].includes(q.type) &&
         q.opts?.map((opt, i) => {
-          let cls = 'opt';
+          let cls = "opt";
           if (submitted) {
-            if (i === q.ans) cls += ' ok';
-            else if (answer === i && i !== q.ans) cls += ' wrong';
-          } else if (answer === i) cls += ' sel';
+            if (i === q.ans) cls += " ok";
+            else if (answer === i && i !== q.ans) cls += " wrong";
+          } else if (answer === i) cls += " sel";
           return (
             <button
               key={i}
@@ -152,15 +160,15 @@ export default function QuestionRenderer({
 
       {submitted && (
         <div className="exp">
-          <div className={'exp-ans ' + (correct ? 'ok' : 'wrong')}>
+          <div className={"exp-ans " + (correct ? "ok" : "wrong")}>
             {correct
-              ? '✓ Correct'
-              : '✗ Correct answer: ' +
-                (q.type === 'gap'
+              ? "✓ Correct"
+              : "✗ Correct answer: " +
+                (q.type === "gap"
                   ? `"${q.ans}"`
-                  : q.type === 'spk'
+                  : q.type === "spk"
                     ? spkLabels[q.ans]
-                    : q.type === 'tf'
+                    : q.type === "tf"
                       ? tfLabels[q.ans]
                       : String.fromCharCode(65 + q.ans))}
           </div>

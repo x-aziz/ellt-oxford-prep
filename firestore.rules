@@ -13,7 +13,7 @@ service cloud.firestore {
     // Each signed-in user can read/write ONLY their own data.
     match /users/{uid} {
       // A user can read/update their own profile, but can never set their
-      // own role — only an existing admin (editing via the console, or a
+      // own role   only an existing admin (editing via the console, or a
       // future admin-only Cloud Function) can grant the admin role.
       allow read: if isSignedIn() && request.auth.uid == uid;
       allow create: if isSignedIn() && request.auth.uid == uid &&
